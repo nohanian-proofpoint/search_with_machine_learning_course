@@ -19,6 +19,8 @@ def create_rescore_ltr_query(user_query: str, query_obj, click_prior_query: str,
                     "active_features": ["name_match"]
                 }
             },
+            "score_mode": "total",
+            "query_weight": main_query_weight,
             "rescore_query_weight": rescore_query_weight
         }
     }
