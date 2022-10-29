@@ -242,24 +242,26 @@ class DataPrepper:
         feature_results["doc_id"] = []  # capture the doc id so we can join later
         feature_results["query_id"] = []  # ^^^
         feature_results["sku"] = []
-        feature_results["name_match"] = []
-        feature_results["name_match_phrase"] = []
-        feature_results["customer_review_count"] = []
-        feature_results["customer_review_average"] = []
-        rng = np.random.default_rng(12345)
+        FEATURE_NAMES = ("name_match","name_match_phrase",
+                "customer_review_count","customer_review_average",
+                "artistName_match_phrase","shortDescription_match_phrase","longDescription_match_phrase",
+                "salesRankShortTerm"
+                )
+        for feature_name in FEATURE_NAMES:
+            feature_results[feature_name] = []
         for hit in response['hits']['hits']:
             doc_id = hit['_id']
             feature_results["doc_id"].append(doc_id)
             feature_results["query_id"].append(query_id)
-            feature_results["sku"].append(doc_id) # hm, can we trust this?
+            feature_results["sku"].append(hit['_source']['sku'][0])
             log_entry_list = hit['fields']['_ltrlog'][0]['log_entry']
-            for feature_value_name in ("name_match","name_match_phrase","customer_review_count","customer_review_average","artistName_match_phrase","shortDescription_match_phrase","longDescription_match_phrase","salesRankShortTerm"):
-                feature_value_values = [e['value'] for e in log_entry_list if 
-                    (e['name']==feature_value_name and ('value' in e) and e['value'])]
-                if feature_value_values:
-                    feature_results[feature_value_name] = feature_value_values[0]
+            for feature_name in FEATURE_NAMES:
+                feature_value_candidates = [e['value'] for e in log_entry_list if
+                    (e['name']==feature_name and ('value' in e) and e['value'])]
+                if feature_value_candidates:
+                    feature_results[feature_name].append(feature_value_candidates[0])
                 else:
-                    feature_results[feature_value_name] = 0.
+                    feature_results[feature_name].append(0.)
         frame = pd.DataFrame(feature_results)
         return frame.astype({'doc_id': 'int64', 'query_id': 'int64', 'sku': 'int64'})
 
