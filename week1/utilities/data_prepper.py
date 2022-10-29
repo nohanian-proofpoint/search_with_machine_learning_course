@@ -243,18 +243,21 @@ class DataPrepper:
         feature_results["query_id"] = []  # ^^^
         feature_results["sku"] = []
         feature_results["name_match"] = []
+        feature_results["name_match_phrase"] = []
         rng = np.random.default_rng(12345)
         for hit in response['hits']['hits']:
             doc_id = hit['_id']
             feature_results["doc_id"].append(doc_id)
             feature_results["query_id"].append(query_id)
             feature_results["sku"].append(doc_id) # hm, can we trust this?
-            log_entry = hit['fields']['_ltrlog'][0]['log_entry'][0]
-            if "value" in log_entry:
-                feature_value = log_entry['value']
-            else:
-                feature_value = 0.
-            feature_results["name_match"].append(feature_value)
+            log_entry_list = hit['fields']['_ltrlog'][0]['log_entry']
+            for feature_value_name in ("name_match","name_match_phrase"):
+                feature_value_values = [e['value'] for e in log_entry_list if 
+                    (e['name']==feature_value_name and ('value' in e) and e['value'])]
+                if feature_value_values:
+                    feature_results[feature_value_name] = feature_value_values[0]
+                else:
+                    feature_results[feature_value_name] = 0.
         frame = pd.DataFrame(feature_results)
         return frame.astype({'doc_id': 'int64', 'query_id': 'int64', 'sku': 'int64'})
 
