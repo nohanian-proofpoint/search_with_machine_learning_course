@@ -4,6 +4,8 @@ import xml.etree.ElementTree as ET
 import pandas as pd
 import numpy as np
 import csv
+import re
+import pprint
 
 # Useful if you want to perform stemming.
 import nltk
@@ -48,9 +50,72 @@ parents_df = pd.DataFrame(list(zip(categories, parents)), columns =['category', 
 queries_df = pd.read_csv(queries_file_name)[['category', 'query']]
 queries_df = queries_df[queries_df['category'].isin(categories)]
 
-# IMPLEMENT ME: Convert queries to lowercase, and optionally implement other normalization, like stemming.
+# Convert queries to lowercase, and optionally implement other normalization, like stemming.
+NONALPHA_RE = re.compile('[^a-zA-Z0-9]+')
+def _convertquery(query):
+    q = query.lower()
+    q = NONALPHA_RE.sub(' ', q)
+    tokens = q.split()
+    return ' '.join([stemmer.stem(t) for t in tokens])
+queries_df["query"] = queries_df["query"].apply(_convertquery)
 
-# IMPLEMENT ME: Roll up categories to ancestors to satisfy the minimum number of queries per category.
+category_count_series = queries_df.groupby("category").size()
+print("initial number of categories with queries: {}".format(len(category_count_series)))
+
+# Roll up categories to ancestors to satisfy the minimum number of queries per category.
+
+print("rolling")
+updatecount=0
+visited =0
+MAX_UPDATE = None # for debugging/testing
+def _handle_node(nodes):
+    global updatecount
+    global queries_df
+    global MAX_UPDATE
+    global visited
+    visited+=1
+    node=nodes[-1]
+    children = tuple(parents_df[parents_df["parent"]==node]["category"].values)
+    if not children:
+        return
+    if MAX_UPDATE and (updatecount>=MAX_UPDATE):
+        return
+    #print("_handle_node: {} , children={}".format(nodes, children))
+
+    # first, let children do their roll-ups
+    for child in children:
+        _handle_node(nodes+[child])
+        if MAX_UPDATE and (updatecount>=MAX_UPDATE):
+            return
+
+    # second, do my roll-ups, if needed
+    if node==root_category_id:
+        return
+    for child in children:
+        child_queries_df = queries_df[queries_df["category"]==child]
+        print("visited={}: category {} has queries: {}".format(visited, nodes+[child], len(child_queries_df)))
+        if (len(child_queries_df)==0) or len(child_queries_df) >= min_queries:
+            continue
+        # roll up to me
+        print("ROLLING updatecount={}, parent={}, child={} count={!r}".format(updatecount, node, child, len(child_queries_df)))
+        update_indexes = []
+        update_categories = []
+        update_queries = []
+        for index, cols in child_queries_df.iterrows():
+            update_indexes.append(index)
+            update_categories.append(node)
+            update_queries.append(cols["query"])
+        queries_df.update(pd.DataFrame({"category":update_categories, "query":update_queries}, index=update_indexes))
+        updatecount+=1
+        if MAX_UPDATE and (updatecount>=MAX_UPDATE):
+            return
+
+_handle_node([root_category_id])
+print("done rolling")
+
+print("post-roll queries_df rows: {}".format(len(queries_df)))
+category_count_series = queries_df.groupby("category").size()
+print("post-roll number of categories with queries: {}".format(len(category_count_series)))
 
 # Create labels in fastText format.
 queries_df['label'] = '__label__' + queries_df['category']

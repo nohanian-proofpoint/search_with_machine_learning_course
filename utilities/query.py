@@ -11,6 +11,7 @@ from urllib.parse import urljoin
 import pandas as pd
 import fileinput
 import logging
+import fasttext
 
 
 logger = logging.getLogger(__name__)
@@ -190,11 +191,33 @@ def create_query(user_query, click_prior_query, filters, sort="_score", sortDir=
     return query_obj
 
 
-def search(client, user_query, index="bbuy_products", sort="_score", sortDir="desc", use_syn=False):
+def search(client, user_query, index="bbuy_products", sort="_score", sortDir="desc", use_syn=False, model_path=None):
     #### W3: classify the query
+    categories = []
+    if user_query and model_path:
+        model = fasttext.load_model(model_path)
+        labels = model.predict(user_query, 3)
+        print("labels: {}".format(labels))
+        PREDICT_THRESHOLD=.5
+        classifer_score=0.
+        for cat_label, prob in zip(labels[0], labels[1]):
+            categories.append(cat_label[9:])
+            classifer_score+=prob
+            if (classifer_score>=PREDICT_THRESHOLD):
+                break
+        if (classifer_score<PREDICT_THRESHOLD):
+            categories=[]
+    print("categories: {}".format(categories))
     #### W3: create filters and boosts
     # Note: you may also want to modify the `create_query` method above
-    query_obj = create_query(user_query, click_prior_query=None, filters=None, sort=sort, sortDir=sortDir, source=["name", "shortDescription"], use_syn=use_syn)
+    if categories:
+        filter_shoulds = [{"match":{"categoryPathIds":{"query":cat}}} for cat in categories]
+        filters = {"bool":{"should":filter_shoulds}}
+    else:
+        filters=None
+    SOURCE = ["name", "shortDescription"]
+    #SOURCE = SOURCE +  ['shortDescription', 'longDescription', 'department', 'sku', 'manufacturer', 'features', 'categoryPath']
+    query_obj = create_query(user_query, click_prior_query=None, filters=filters, sort=sort, sortDir=sortDir, source=SOURCE, use_syn=use_syn)
     logging.info(query_obj)
     response = client.search(query_obj, index=index)
     if response and response['hits']['hits'] and len(response['hits']['hits']) > 0:
@@ -216,6 +239,8 @@ if __name__ == "__main__":
                          help='The OpenSearch port')
     general.add_argument('--user',
                          help='The OpenSearch admin.  If this is set, the program will prompt for password too. If not set, use default of admin/admin')
+    general.add_argument("-m", '--model', default=None,
+                         help='The path to the query->category model')
     general.add_argument("--synonyms", "-y",default=False, action='store_const', const=True)
 
     args = parser.parse_args()
@@ -245,13 +270,14 @@ if __name__ == "__main__":
     )
     use_syn = args.synonyms
     index_name = args.index
+    model_path = args.model
     query_prompt = "\nEnter your query (type 'Exit' to exit or hit ctrl-c):"
     print(query_prompt)
     for line in fileinput.input('-'):
         query = line.rstrip()
         if query == "Exit":
             break
-        search(client=opensearch, user_query=query, index=index_name, use_syn=use_syn)
+        search(client=opensearch, user_query=query, index=index_name, use_syn=use_syn, model_path=model_path, sort="salesRankMediumTerm", sortDir="asc")
 
         print(query_prompt)
 
