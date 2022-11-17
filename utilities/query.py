@@ -18,6 +18,9 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 logging.basicConfig(format='%(levelname)s:%(message)s')
 
+from sentence_transformers import SentenceTransformer
+MODEL = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+
 # expects clicks and impressions to be in the row
 def create_prior_queries_from_group(
         click_group):  # total impressions isn't currently used, but it mayb worthwhile at some point
@@ -47,6 +50,30 @@ def create_prior_queries(doc_ids, doc_id_weights,
             except KeyError as ke:
                 pass  # nothing to do in this case, it just means we can't find priors for this doc
     return click_prior_query
+
+
+def create_vector_query(user_query, size=10, source=None):
+    embedding = MODEL.encode([user_query])[0]
+    query_obj = {
+        'size': size,
+        "query": {
+        }
+    }
+    if (not user_query) or (user_query == "*") or (user_query == "#"):
+        query_obj["query"] = {"match_all": {}}
+    else:
+        embedding = MODEL.encode([user_query])[0]
+        query_obj["query"] = {
+                "knn": {
+                    "embedding": {
+                        "vector": embedding,
+                        "k": size
+                    }
+                }
+            }
+    if source is not None:  # otherwise use the default and retrieve all source
+        query_obj["_source"] = source
+    return query_obj
 
 
 # Hardcoded query here.  Better to use search templates or other query config.
@@ -191,7 +218,7 @@ def create_query(user_query, click_prior_query, filters, sort="_score", sortDir=
     return query_obj
 
 
-def search(client, user_query, index="bbuy_products", sort="_score", sortDir="desc", use_syn=False, model_path=None):
+def search(client, user_query, index="bbuy_products", sort="_score", sortDir="desc", use_syn=False, model_path=None, use_vector=False):
     #### W3: classify the query
     categories = []
     if user_query and model_path:
@@ -207,7 +234,6 @@ def search(client, user_query, index="bbuy_products", sort="_score", sortDir="de
                 break
         if (classifer_score<PREDICT_THRESHOLD):
             categories=[]
-    print("categories: {}".format(categories))
     #### W3: create filters and boosts
     # Note: you may also want to modify the `create_query` method above
     if categories:
@@ -217,8 +243,14 @@ def search(client, user_query, index="bbuy_products", sort="_score", sortDir="de
         filters=None
     SOURCE = ["name", "shortDescription"]
     #SOURCE = SOURCE +  ['shortDescription', 'longDescription', 'department', 'sku', 'manufacturer', 'features', 'categoryPath']
-    query_obj = create_query(user_query, click_prior_query=None, filters=filters, sort=sort, sortDir=sortDir, source=SOURCE, use_syn=use_syn)
+
+    if use_vector:
+        query_obj = create_vector_query(user_query, size=10, source=SOURCE)
+    else:
+        query_obj = create_query(user_query, click_prior_query=None, filters=filters, sort=sort, sortDir=sortDir, source=SOURCE, use_syn=use_syn)
     logging.info(query_obj)
+    #import pprint
+    #pprint.pprint(query_obj)
     response = client.search(query_obj, index=index)
     if response and response['hits']['hits'] and len(response['hits']['hits']) > 0:
         hits = response['hits']['hits']
@@ -242,6 +274,7 @@ if __name__ == "__main__":
     general.add_argument("-m", '--model', default=None,
                          help='The path to the query->category model')
     general.add_argument("--synonyms", "-y",default=False, action='store_const', const=True)
+    general.add_argument("--vector", "-v",default=False, action='store_const', const=True)
 
     args = parser.parse_args()
 
@@ -269,6 +302,7 @@ if __name__ == "__main__":
 
     )
     use_syn = args.synonyms
+    use_vector = args.vector
     index_name = args.index
     model_path = args.model
     query_prompt = "\nEnter your query (type 'Exit' to exit or hit ctrl-c):"
@@ -277,7 +311,7 @@ if __name__ == "__main__":
         query = line.rstrip()
         if query == "Exit":
             break
-        search(client=opensearch, user_query=query, index=index_name, use_syn=use_syn, model_path=model_path, sort="salesRankMediumTerm", sortDir="asc")
+        search(client=opensearch, user_query=query, index=index_name, use_syn=use_syn, use_vector=use_vector, model_path=model_path, sort="salesRankMediumTerm", sortDir="asc")
 
         print(query_prompt)
 
